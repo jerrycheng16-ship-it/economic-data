@@ -1,78 +1,138 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import requests
 from fredapi import Fred
 from io import BytesIO
 
-# ==================================
-# FRED KEY
-# ==================================
+# ==========================================
+# FRED API KEY
+# ==========================================
 
-FRED_API_KEY = "2132d80f475773a92941db7ac291147a"
+FRED_API_KEY = "YOUR_FRED_API_KEY"
 
 fred = Fred(api_key=FRED_API_KEY)
 
-# ==================================
+# ==========================================
 # Page
-# ==================================
+# ==========================================
 
 st.set_page_config(
-    page_title="FRED 經濟儀表板",
+    page_title="FRED Economic Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 FRED 全球總經儀表板")
+st.title("📈 FRED Economic Dashboard")
 
-# ==================================
-# 指標
-# ==================================
+# ==========================================
+# Search FRED
+# ==========================================
 
-INDICATORS = {
+@st.cache_data
+def search_fred(keyword):
 
-    "GDP": "GDP",
+    if keyword == "":
+        return pd.DataFrame()
 
-    "CPI":
-    "CPIAUCSL",
+    url = "https://api.stlouisfed.org/fred/series/search"
 
-    "Core CPI":
-    "CPILFESL",
+    params = {
+        "search_text": keyword,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "limit": 100
+    }
 
-    "PCE":
-    "PCE",
+    try:
 
-    "Core PCE":
-    "PCEPILFE",
+        response = requests.get(
+            url,
+            params=params,
+            timeout=30
+        )
 
-    "Unemployment":
-    "UNRATE",
+        data = response.json()
 
-    "Fed Funds":
-    "FEDFUNDS",
+        if "seriess" not in data:
+            return pd.DataFrame()
 
-    "M2":
-    "M2SL",
+        rows = []
 
-    "US 10Y":
-    "GS10",
+        for item in data["seriess"]:
 
-    "US 2Y":
-    "GS2",
+            rows.append({
+                "ID": item["id"],
+                "Title": item["title"],
+                "Frequency": item["frequency"],
+                "Units": item["units"]
+            })
 
-    "Retail Sales":
-    "RSAFS"
-}
+        return pd.DataFrame(rows)
 
-# ==================================
+    except Exception:
+        return pd.DataFrame()
+
+# ==========================================
 # Sidebar
-# ==================================
+# ==========================================
 
-indicator_name = st.sidebar.selectbox(
-    "指標",
-    list(INDICATORS.keys())
+st.sidebar.header("FRED Search")
+
+search_keyword = st.sidebar.text_input(
+    "搜尋關鍵字",
+    "CPI"
 )
 
-transform = st.sidebar.selectbox(
+search_result = search_fred(search_keyword)
+
+if search_result.empty:
+
+    st.warning("查無資料")
+
+    st.stop()
+
+# ==========================================
+# Select Series
+# ==========================================
+
+series_options = {}
+
+for _, row in search_result.iterrows():
+
+    label = (
+        f"{row['ID']} | "
+        f"{row['Title']}"
+    )
+
+    series_options[label] = row["ID"]
+
+selected_label = st.sidebar.selectbox(
+    "選擇 Series",
+    list(series_options.keys())
+)
+
+series_id = series_options[selected_label]
+
+# ==========================================
+# Frequency
+# ==========================================
+
+frequency = st.sidebar.selectbox(
+    "資料頻率",
+    [
+        "原始",
+        "月",
+        "季",
+        "年"
+    ]
+)
+
+# ==========================================
+# Display
+# ==========================================
+
+display_mode = st.sidebar.selectbox(
     "顯示方式",
     [
         "Level",
@@ -83,18 +143,28 @@ transform = st.sidebar.selectbox(
     ]
 )
 
+# ==========================================
+# Start Date
+# ==========================================
+
 start_date = st.sidebar.date_input(
-    "起始日期",
+    "開始日期",
     pd.Timestamp("2000-01-01")
 )
 
-# ==================================
-# Download
-# ==================================
+# ==========================================
+# Download Series
+# ==========================================
 
-series = fred.get_series(
-    INDICATORS[indicator_name]
-)
+try:
+
+    series = fred.get_series(series_id)
+
+except Exception as e:
+
+    st.error(str(e))
+
+    st.stop()
 
 df = pd.DataFrame(series)
 
@@ -102,23 +172,62 @@ df.columns = ["Value"]
 
 df.index.name = "Date"
 
-df.reset_index(inplace=True)
+df = df.reset_index()
 
-df = df[df["Date"] >= pd.Timestamp(start_date)]
+df["Date"] = pd.to_datetime(df["Date"])
 
-# ==================================
+df = df[
+    df["Date"] >= pd.Timestamp(start_date)
+]
+
+if df.empty:
+
+    st.warning("無資料")
+
+    st.stop()
+
+# ==========================================
+# Resample
+# ==========================================
+
+df = df.set_index("Date")
+
+if frequency == "月":
+
+    df = df.resample("ME").last()
+
+elif frequency == "季":
+
+    df = df.resample("QE").last()
+
+elif frequency == "年":
+
+    df = df.resample("YE").last()
+
+df = df.reset_index()
+
+# ==========================================
 # Transform
-# ==================================
+# ==========================================
 
-if transform == "YoY %":
+freq_lag = {
+    "原始": 12,
+    "月": 12,
+    "季": 4,
+    "年": 1
+}
+
+if display_mode == "YoY %":
+
+    lag = freq_lag[frequency]
 
     df["Value"] = (
         df["Value"]
-        .pct_change(12)
+        .pct_change(lag)
         * 100
     )
 
-elif transform == "MoM %":
+elif display_mode == "MoM %":
 
     df["Value"] = (
         df["Value"]
@@ -126,63 +235,96 @@ elif transform == "MoM %":
         * 100
     )
 
-elif transform == "QoQ %":
+elif display_mode == "QoQ %":
 
     df["Value"] = (
         df["Value"]
-        .pct_change(3)
+        .pct_change(1)
         * 100
     )
 
-elif transform == "QoQ SAAR %":
+elif display_mode == "QoQ SAAR %":
 
-    qoq = df["Value"].pct_change(3)
+    qoq = (
+        df["Value"]
+        .pct_change(1)
+    )
 
     df["Value"] = (
         ((1 + qoq) ** 4 - 1)
         * 100
     )
 
-# ==================================
-# Metrics
-# ==================================
+# ==========================================
+# Series Info
+# ==========================================
 
-latest = df["Value"].dropna().iloc[-1]
+selected_info = search_result[
+    search_result["ID"] == series_id
+].iloc[0]
 
-max_value = df["Value"].max()
+col1, col2, col3 = st.columns(3)
 
-min_value = df["Value"].min()
-
-c1, c2, c3 = st.columns(3)
-
-c1.metric(
-    "最新值",
-    f"{latest:.2f}"
+col1.metric(
+    "Series ID",
+    series_id
 )
 
-c2.metric(
-    "最高值",
-    f"{max_value:.2f}"
+col2.metric(
+    "Frequency",
+    selected_info["Frequency"]
 )
 
-c3.metric(
-    "最低值",
-    f"{min_value:.2f}"
+col3.metric(
+    "Units",
+    selected_info["Units"]
 )
 
-# ==================================
+st.write(
+    f"### {selected_info['Title']}"
+)
+
+# ==========================================
+# Statistics
+# ==========================================
+
+clean_data = df["Value"].dropna()
+
+if len(clean_data) > 0:
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "最新值",
+        f"{clean_data.iloc[-1]:,.2f}"
+    )
+
+    c2.metric(
+        "最高值",
+        f"{clean_data.max():,.2f}"
+    )
+
+    c3.metric(
+        "最低值",
+        f"{clean_data.min():,.2f}"
+    )
+
+# ==========================================
 # Chart
-# ==================================
+# ==========================================
+
+st.subheader("歷史走勢")
 
 fig = px.line(
     df,
     x="Date",
     y="Value",
-    title=f"{indicator_name} ({transform})"
+    title=f"{series_id} ({display_mode})"
 )
 
 fig.update_layout(
-    height=700
+    height=700,
+    hovermode="x unified"
 )
 
 st.plotly_chart(
@@ -190,9 +332,9 @@ st.plotly_chart(
     use_container_width=True
 )
 
-# ==================================
-# Raw Data
-# ==================================
+# ==========================================
+# Data
+# ==========================================
 
 st.subheader("資料")
 
@@ -201,9 +343,9 @@ st.dataframe(
     use_container_width=True
 )
 
-# ==================================
+# ==========================================
 # Excel Download
-# ==================================
+# ==========================================
 
 buffer = BytesIO()
 
@@ -214,13 +356,15 @@ with pd.ExcelWriter(
 
     df.to_excel(
         writer,
-        index=False
+        index=False,
+        sheet_name=series_id
     )
 
 buffer.seek(0)
 
 st.download_button(
     "📥 下載 Excel",
-    buffer,
-    file_name=f"{indicator_name}.xlsx"
+    data=buffer,
+    file_name=f"{series_id}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
