@@ -82,7 +82,7 @@ def get_world_bank_data(country, indicator):
 
     rows = []
 
-    for item in data[1\]:
+    for item in data[1]:
         if item["value"] is not None:
 
             rows.append({
