@@ -9,7 +9,7 @@ from io import BytesIO
 # FRED API KEY
 # =====================================================
 
-FRED_API_KEY = st.secrets[2132d80f475773a92941db7ac291147a"]
+FRED_API_KEY = st.secrets["2132d80f475773a92941db7ac291147a"]
 
 fred = Fred(api_key=FRED_API_KEY)
 
