@@ -9,7 +9,7 @@ from datetime import datetime
 # FRED
 # =====================
 
-FRED_API_KEY = "YOUR_FRED_API_KEY"
+FRED_API_KEY = "2132d80f475773a92941db7ac291147a"
 
 fred = Fred(api_key=FRED_API_KEY)
 
