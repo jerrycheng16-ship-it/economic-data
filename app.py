@@ -79,7 +79,7 @@ def get_world_bank_data(country_code, indicator_code):
 
         rows = []
 
-        for item in data[1\]:
+        for item in data[1]:
 
             value = item.get("value")
 
