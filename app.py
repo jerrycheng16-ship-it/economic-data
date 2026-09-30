@@ -79,7 +79,7 @@ def get_world_bank_data(country_code, indicator_code):
 
         rows = []
 
-        for item in data[1]:
+        for item in data[1\]:
 
             value = item.get("value")
 
@@ -217,4 +217,120 @@ metric_cols = st.columns(
     len(selected_countries)
 )
 
-for i, country in 
+for i, country in enumerate(selected_countries):
+
+    temp = all_data[
+        all_data["Country"] == country
+    ]
+
+    if temp.empty:
+        continue
+
+    latest = temp["Value"].iloc[-1]
+
+    metric_cols[i].metric(
+        country,
+        f"{latest:,.2f}"
+    )
+
+# ==================================================
+# 圖表
+# ==================================================
+
+st.subheader(
+    f"{selected_indicator} ({display_mode})"
+)
+
+fig = px.line(
+    all_data,
+    x="Date",
+    y="Value",
+    color="Country",
+    markers=True
+)
+
+fig.update_layout(
+    height=700,
+    hovermode="x unified"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ==================================================
+# 統計資訊
+# ==================================================
+
+st.subheader("統計資訊")
+
+stats = []
+
+for country in selected_countries:
+
+    temp = all_data[
+        all_data["Country"] == country
+    ]
+
+    if temp.empty:
+        continue
+
+    stats.append({
+        "Country": country,
+        "Latest": round(temp["Value"].iloc[-1], 2),
+        "Max": round(temp["Value"].max(), 2),
+        "Min": round(temp["Value"].min(), 2),
+        "Average": round(temp["Value"].mean(), 2)
+    })
+
+stats_df = pd.DataFrame(stats)
+
+st.dataframe(
+    stats_df,
+    use_container_width=True
+)
+
+# ==================================================
+# 原始資料
+# ==================================================
+
+st.subheader("原始資料")
+
+display_df = all_data.copy()
+
+display_df["Date"] = (
+    display_df["Date"]
+    .dt.year
+)
+
+st.dataframe(
+    display_df,
+    use_container_width=True
+)
+
+# ==================================================
+# Excel下載
+# ==================================================
+
+excel_buffer = BytesIO()
+
+with pd.ExcelWriter(
+    excel_buffer,
+    engine="openpyxl"
+) as writer:
+
+    display_df.to_excel(
+        writer,
+        index=False,
+        sheet_name="Economic Data"
+    )
+
+excel_buffer.seek(0)
+
+st.download_button(
+    label="📥 下載 Excel",
+    data=excel_buffer,
+    file_name="Global_Economic_Data.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
