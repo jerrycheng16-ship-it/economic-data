@@ -1,30 +1,63 @@
 import streamlit as st
 import pandas as pd
 import requests
+import plotly.express as px
+from io import BytesIO
 
-st.title("全球經濟數據儀表板")
+# ==================================================
+# 頁面設定
+# ==================================================
 
-url = (
-    "https://api.worldbank.org/v2/"
-    "country/USA/indicator/"
-    "NY.GDP.MKTP.CD?format=json"
+st.set_page_config(
+    page_title="全球經濟數據儀表板",
+    page_icon="🌍",
+    layout="wide"
 )
 
-response = requests.get(url)
+# ==================================================
+# 世界銀行指標
+# ==================================================
 
-st.write("API Status")
-st.write(response.status_code)
+INDICATORS = {
+    "GDP (Current US$)": "NY.GDP.MKTP.CD",
+    "GDP Growth (%)": "NY.GDP.MKTP.KD.ZG",
+    "GDP Per Capita": "NY.GDP.PCAP.CD",
+    "Inflation CPI (%)": "FP.CPI.TOTL.ZG",
+    "Unemployment (%)": "SL.UEM.TOTL.ZS",
+    "Population": "SP.POP.TOTL"
+}
 
-data = response.json()
+# ==================================================
+# 國家
+# ==================================================
 
-st.write("Data Type")
-st.write(type(data))
+COUNTRIES = {
+    "United States":"USA",
+    "China":"CHN",
+    "Taiwan":"TWN",
+    "Japan":"JPN",
+    "South Korea":"KOR",
+    "India":"IND",
+    "Germany":"DEU",
+    "France":"FRA",
+    "United Kingdom":"GBR",
+    "Canada":"CAN",
+    "Australia":"AUS",
+    "Brazil":"BRA"
+}
 
-st.write("Data Length")
-st.write(len(data))
+# ==================================================
+# World Bank API
+# ==================================================
 
-st.write("First Element")
-st.write(data[0])
+@st.cache_data
+def get_world_bank_data(country_code, indicator_code):
 
-st.write("Second Element Sample")
-st.write(data[1][0])
+    url = (
+        f"https://api.worldbank.org/v2/country/"
+        f"{country_code}/indicator/"
+        f"{indicator_code}"
+        f"?format=json&per_page=5000"
+    )
+
+ 
