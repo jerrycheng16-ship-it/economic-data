@@ -5,17 +5,17 @@ import requests
 from fredapi import Fred
 from io import BytesIO
 
-# ==========================================
+# =====================================================
 # FRED API KEY
-# ==========================================
+# =====================================================
 
-FRED_API_KEY = "YOUR_FRED_API_KEY"
+FRED_API_KEY = st.secrets[2132d80f475773a92941db7ac291147a"]
 
 fred = Fred(api_key=FRED_API_KEY)
 
-# ==========================================
-# Page
-# ==========================================
+# =====================================================
+# PAGE
+# =====================================================
 
 st.set_page_config(
     page_title="FRED Economic Dashboard",
@@ -25,11 +25,11 @@ st.set_page_config(
 
 st.title("📈 FRED Economic Dashboard")
 
-# ==========================================
-# Search FRED
-# ==========================================
+# =====================================================
+# SEARCH FUNCTION
+# =====================================================
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def search_fred(keyword):
 
     if keyword == "":
@@ -44,61 +44,58 @@ def search_fred(keyword):
         "limit": 100
     }
 
-    try:
+    response = requests.get(
+        url,
+        params=params,
+        timeout=30
+    )
 
-        response = requests.get(
-            url,
-            params=params,
-            timeout=30
-        )
+    data = response.json()
 
-        data = response.json()
+    if "seriess" not in data:
+        return pd.DataFrame()
 
-        if "seriess" not in data:
-            return pd.DataFrame()
+    rows = []
 
-        rows = []
+    for item in data["seriess"\]:
 
-        for item in data["seriess"]:
-
-            rows.append({
+        rows.append(
+            {
                 "ID": item["id"],
                 "Title": item["title"],
                 "Frequency": item["frequency"],
-                "Units": item["units"]
-            })
+                "Units": item["units"],
+                "Start": item["observation_start"],
+                "End": item["observation_end"]
+            }
+        )
 
-        return pd.DataFrame(rows)
+    return pd.DataFrame(rows)
 
-    except Exception:
-        return pd.DataFrame()
-
-# ==========================================
-# Sidebar
-# ==========================================
+# =====================================================
+# SIDEBAR
+# =====================================================
 
 st.sidebar.header("FRED Search")
 
 search_keyword = st.sidebar.text_input(
     "搜尋關鍵字",
-    "CPI"
+    value="CPI"
 )
 
-search_result = search_fred(search_keyword)
+search_df = search_fred(search_keyword)
 
-if search_result.empty:
-
-    st.warning("查無資料")
-
+if search_df.empty:
+    st.warning("查無符合的 Series")
     st.stop()
 
-# ==========================================
-# Select Series
-# ==========================================
+# =====================================================
+# SERIES SELECT
+# =====================================================
 
 series_options = {}
 
-for _, row in search_result.iterrows():
+for _, row in search_df.iterrows():
 
     label = (
         f"{row['ID']} | "
@@ -107,16 +104,24 @@ for _, row in search_result.iterrows():
 
     series_options[label] = row["ID"]
 
-selected_label = st.sidebar.selectbox(
-    "選擇 Series",
-    list(series_options.keys())
+selected_labels = st.sidebar.multiselect(
+    "選擇 Series (可複選)",
+    options=list(series_options.keys()),
+    default=list(series_options.keys())[:3]
 )
 
-series_id = series_options[selected_label]
+if len(selected_labels) == 0:
+    st.warning("請至少選擇一個 Series")
+    st.stop()
 
-# ==========================================
-# Frequency
-# ==========================================
+selected_series = [
+    series_options[x]
+    for x in selected_labels
+]
+
+# =====================================================
+# SETTINGS
+# =====================================================
 
 frequency = st.sidebar.selectbox(
     "資料頻率",
@@ -127,10 +132,6 @@ frequency = st.sidebar.selectbox(
         "年"
     ]
 )
-
-# ==========================================
-# Display
-# ==========================================
 
 display_mode = st.sidebar.selectbox(
     "顯示方式",
@@ -143,188 +144,229 @@ display_mode = st.sidebar.selectbox(
     ]
 )
 
-# ==========================================
-# Start Date
-# ==========================================
+normalize = st.sidebar.checkbox(
+    "Normalize (基期=100)",
+    value=False
+)
 
 start_date = st.sidebar.date_input(
     "開始日期",
     pd.Timestamp("2000-01-01")
 )
 
-# ==========================================
-# Download Series
-# ==========================================
+# =====================================================
+# DOWNLOAD DATA
+# =====================================================
 
-try:
+combined_df = pd.DataFrame()
 
-    series = fred.get_series(series_id)
+for sid in selected_series:
 
-except Exception as e:
+    try:
 
-    st.error(str(e))
+        data = fred.get_series(sid)
 
+        temp = pd.DataFrame(data)
+
+        temp.columns = [sid]
+
+        temp.index.name = "Date"
+
+        if combined_df.empty:
+
+            combined_df = temp
+
+        else:
+
+            combined_df = combined_df.join(
+                temp,
+                how="outer"
+            )
+
+    except Exception as e:
+
+        st.warning(f"{sid} 下載失敗")
+
+# =====================================================
+# CHECK DATA
+# =====================================================
+
+if combined_df.empty:
+    st.error("無法下載任何資料")
     st.stop()
 
-df = pd.DataFrame(series)
+# =====================================================
+# DATE PROCESS
+# =====================================================
 
-df.columns = ["Value"]
+combined_df = combined_df.reset_index()
 
-df.index.name = "Date"
+combined_df["Date"] = pd.to_datetime(
+    combined_df["Date"]
+)
 
-df = df.reset_index()
-
-df["Date"] = pd.to_datetime(df["Date"])
-
-df = df[
-    df["Date"] >= pd.Timestamp(start_date)
+combined_df = combined_df[
+    combined_df["Date"] >= pd.Timestamp(start_date)
 ]
 
-if df.empty:
+combined_df = combined_df.sort_values(
+    "Date"
+)
 
-    st.warning("無資料")
+# =====================================================
+# RESAMPLE
+# =====================================================
 
-    st.stop()
-
-# ==========================================
-# Resample
-# ==========================================
-
-df = df.set_index("Date")
+combined_df = combined_df.set_index(
+    "Date"
+)
 
 if frequency == "月":
 
-    df = df.resample("ME").last()
+    combined_df = (
+        combined_df
+        .resample("ME")
+        .last()
+    )
 
 elif frequency == "季":
 
-    df = df.resample("QE").last()
+    combined_df = (
+        combined_df
+        .resample("QE")
+        .last()
+    )
 
 elif frequency == "年":
 
-    df = df.resample("YE").last()
+    combined_df = (
+        combined_df
+        .resample("YE")
+        .last()
+    )
 
-df = df.reset_index()
+combined_df = combined_df.reset_index()
 
-# ==========================================
-# Transform
-# ==========================================
+# =====================================================
+# TRANSFORM
+# =====================================================
 
-freq_lag = {
+value_cols = [
+    c for c in combined_df.columns
+    if c != "Date"
+]
+
+lag_map = {
     "原始": 12,
     "月": 12,
     "季": 4,
     "年": 1
 }
 
-if display_mode == "YoY %":
+for col in value_cols:
 
-    lag = freq_lag[frequency]
+    if display_mode == "YoY %":
 
-    df["Value"] = (
-        df["Value"]
-        .pct_change(lag)
-        * 100
-    )
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(
+                lag_map[frequency]
+            )
+            * 100
+        )
 
-elif display_mode == "MoM %":
+    elif display_mode == "MoM %":
 
-    df["Value"] = (
-        df["Value"]
-        .pct_change(1)
-        * 100
-    )
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(1)
+            * 100
+        )
 
-elif display_mode == "QoQ %":
+    elif display_mode == "QoQ %":
 
-    df["Value"] = (
-        df["Value"]
-        .pct_change(1)
-        * 100
-    )
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(1)
+            * 100
+        )
 
-elif display_mode == "QoQ SAAR %":
+    elif display_mode == "QoQ SAAR %":
 
-    qoq = (
-        df["Value"]
-        .pct_change(1)
-    )
+        qoq = (
+            combined_df[col]
+            .pct_change(1)
+        )
 
-    df["Value"] = (
-        ((1 + qoq) ** 4 - 1)
-        * 100
-    )
+        combined_df[col] = (
+            ((1 + qoq) ** 4 - 1)
+            * 100
+        )
 
-# ==========================================
-# Series Info
-# ==========================================
+# =====================================================
+# NORMALIZE
+# =====================================================
 
-selected_info = search_result[
-    search_result["ID"] == series_id
-].iloc[0]
+if normalize:
 
-col1, col2, col3 = st.columns(3)
+    for col in value_cols:
 
-col1.metric(
-    "Series ID",
-    series_id
+        clean = combined_df[col].dropna()
+
+        if len(clean) > 0:
+
+            base = clean.iloc[0]
+
+            if base != 0:
+
+                combined_df[col] = (
+                    combined_df[col]
+                    / base
+                    * 100
+                )
+
+# =====================================================
+# SERIES INFO
+# =====================================================
+
+st.subheader("Series 資訊")
+
+info_df = search_df[
+    search_df["ID"].isin(selected_series)
+]
+
+st.dataframe(
+    info_df,
+    use_container_width=True
 )
 
-col2.metric(
-    "Frequency",
-    selected_info["Frequency"]
+# =====================================================
+# MELT FOR PLOTLY
+# =====================================================
+
+plot_df = combined_df.melt(
+    id_vars="Date",
+    var_name="Series",
+    value_name="Value"
 )
 
-col3.metric(
-    "Units",
-    selected_info["Units"]
-)
-
-st.write(
-    f"### {selected_info['Title']}"
-)
-
-# ==========================================
-# Statistics
-# ==========================================
-
-clean_data = df["Value"].dropna()
-
-if len(clean_data) > 0:
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "最新值",
-        f"{clean_data.iloc[-1]:,.2f}"
-    )
-
-    c2.metric(
-        "最高值",
-        f"{clean_data.max():,.2f}"
-    )
-
-    c3.metric(
-        "最低值",
-        f"{clean_data.min():,.2f}"
-    )
-
-# ==========================================
-# Chart
-# ==========================================
+# =====================================================
+# CHART
+# =====================================================
 
 st.subheader("歷史走勢")
 
 fig = px.line(
-    df,
+    plot_df,
     x="Date",
     y="Value",
-    title=f"{series_id} ({display_mode})"
+    color="Series"
 )
 
 fig.update_layout(
-    height=700,
-    hovermode="x unified"
+    height=800,
+    hovermode="x unified",
+    legend_title="Series"
 )
 
 st.plotly_chart(
@@ -332,20 +374,61 @@ st.plotly_chart(
     use_container_width=True
 )
 
-# ==========================================
-# Data
-# ==========================================
+# =====================================================
+# LATEST VALUES
+# =====================================================
 
-st.subheader("資料")
+st.subheader("最新數值")
+
+latest_rows = []
+
+for col in value_cols:
+
+    s = combined_df[col].dropna()
+
+    if len(s) > 0:
+
+        latest_rows.append(
+            {
+                "Series": col,
+                "Latest": round(
+                    s.iloc[-1],
+                    4
+                ),
+                "Max": round(
+                    s.max(),
+                    4
+                ),
+                "Min": round(
+                    s.min(),
+                    4
+                )
+            }
+        )
+
+latest_df = pd.DataFrame(
+    latest_rows
+)
 
 st.dataframe(
-    df,
+    latest_df,
     use_container_width=True
 )
 
-# ==========================================
-# Excel Download
-# ==========================================
+# =====================================================
+# RAW DATA
+# =====================================================
+
+st.subheader("原始資料")
+
+st.dataframe(
+    combined_df,
+    use_container_width=True
+)
+
+# =====================================================
+# DOWNLOAD EXCEL
+# =====================================================
 
 buffer = BytesIO()
 
@@ -354,17 +437,23 @@ with pd.ExcelWriter(
     engine="openpyxl"
 ) as writer:
 
-    df.to_excel(
+    combined_df.to_excel(
         writer,
-        index=False,
-        sheet_name=series_id
+        sheet_name="Data",
+        index=False
+    )
+
+    latest_df.to_excel(
+        writer,
+        sheet_name="Statistics",
+        index=False
     )
 
 buffer.seek(0)
 
 st.download_button(
-    "📥 下載 Excel",
+    label="📥 Download Excel",
     data=buffer,
-    file_name=f"{series_id}.xlsx",
+    file_name="fred_multi_series.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
