@@ -1,364 +1,459 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import plotly.express as px
+import requests
+from fredapi import Fred
 from io import BytesIO
-from datetime import datetime
+
+# =====================================================
+# FRED API KEY
+# =====================================================
+
+FRED_API_KEY = st.secrets["2132d80f475773a92941db7ac291147a"]
+
+fred = Fred(api_key=FRED_API_KEY)
+
+# =====================================================
+# PAGE
+# =====================================================
 
 st.set_page_config(
-    page_title="Global Asset Dashboard",
+    page_title="FRED Economic Dashboard",
+    page_icon="📈",
     layout="wide"
 )
 
-st.title("🌎 Global Asset Dashboard")
+st.title("📈 FRED Economic Dashboard")
 
 # =====================================================
-# ETF Universe
+# SEARCH FUNCTION
 # =====================================================
 
-EQUITY_ETFS = {
+@st.cache_data(show_spinner=False)
+def search_fred(keyword):
 
-    "美國-SPY":"SPY",
-    "美國-IVV":"IVV",
-    "美國-VTI":"VTI",
-    "美國科技-QQQ":"QQQ",
-    "美國成長-VUG":"VUG",
-    "美國價值-VTV":"VTV",
-    "美國小型股-IWM":"IWM",
+    if keyword == "":
+        return pd.DataFrame()
 
-    "加拿大-EWC":"EWC",
-    "墨西哥-EWW":"EWW",
+    url = "https://api.stlouisfed.org/fred/series/search"
 
-    "台灣-EWT":"EWT",
-    "日本-EWJ":"EWJ",
-    "中國-MCHI":"MCHI",
-    "中國A股-CNYA":"CNYA",
-    "香港-EWH":"EWH",
-    "韓國-EWY":"EWY",
-    "印度-INDA":"INDA",
-    "印尼-EIDO":"EIDO",
-    "馬來西亞-EWM":"EWM",
-    "新加坡-EWS":"EWS",
-    "泰國-THD":"THD",
-    "越南-VNM":"VNM",
-    "菲律賓-EPHE":"EPHE",
+    params = {
+        "search_text": keyword,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "limit": 100
+    }
 
-    "英國-EWU":"EWU",
-    "德國-EWG":"EWG",
-    "法國-EWQ":"EWQ",
-    "義大利-EWI":"EWI",
-    "西班牙-EWP":"EWP",
-    "荷蘭-EWN":"EWN",
-    "瑞士-EWL":"EWL",
-    "瑞典-EWD":"EWD",
-    "挪威-ENOR":"ENOR",
-    "波蘭-EPOL":"EPOL",
-    "希臘-GREK":"GREK",
-    "土耳其-TUR":"TUR",
+    response = requests.get(
+        url,
+        params=params,
+        timeout=30
+    )
 
-    "巴西-EWZ":"EWZ",
-    "智利-ECH":"ECH",
-    "秘魯-EPU":"EPU",
+    data = response.json()
 
-    "沙烏地-KSA":"KSA",
-    "阿聯-UAE":"UAE",
-    "卡達-QAT":"QAT",
+    if "seriess" not in data:
+        return pd.DataFrame()
 
-    "南非-EZA":"EZA",
-    "埃及-EGPT":"EGPT",
+    rows = []
 
-    "新興市場-EEM":"EEM",
-    "新興市場-VWO":"VWO",
-    "歐洲-VGK":"VGK",
-    "歐元區-EZU":"EZU",
-    "亞太除日本-AAXJ":"AAXJ",
-    "MSCI世界-URTH":"URTH",
-    "全球股票-ACWI":"ACWI"
-}
+    for item in data["seriess"\]:
 
-TREASURY_ETFS = {
-    "超短公債-BIL":"BIL",
-    "短期公債-SHY":"SHY",
-    "中期公債-IEF":"IEF",
-    "長期公債-TLT":"TLT",
-    "超長公債-VGLT":"VGLT"
-}
+        rows.append(
+            {
+                "ID": item["id"],
+                "Title": item["title"],
+                "Frequency": item["frequency"],
+                "Units": item["units"],
+                "Start": item["observation_start"],
+                "End": item["observation_end"]
+            }
+        )
 
-IG_ETFS = {
-    "投資級債-LQD":"LQD",
-    "短投資級債-VCSH":"VCSH",
-    "中投資級債-VCIT":"VCIT"
-}
-
-HY_ETFS = {
-    "高收益債-HYG":"HYG",
-    "非投資級債-JNK":"JNK"
-}
-
-EMD_ETFS = {
-    "新興美元債-EMB":"EMB",
-    "新興美元債-VWOB":"VWOB"
-}
-
-LOCAL_ETFS = {
-    "新興本幣債-LEMB":"LEMB"
-}
-
-COMMODITY_ETFS = {
-    "黃金-GLD":"GLD",
-    "黃金-IAU":"IAU",
-    "白銀-SLV":"SLV",
-    "原油-USO":"USO",
-    "天然氣-UNG":"UNG",
-    "工業金屬-DBB":"DBB",
-    "農產品-DBA":"DBA",
-    "商品綜合-DBC":"DBC"
-}
-
-REIT_ETFS = {
-    "美國REIT-VNQ":"VNQ",
-    "全球REIT-REET":"REET",
-    "國際REIT-VNQI":"VNQI"
-}
-
-SAFE_ETFS = {
-    "美元-UUP":"UUP",
-    "日圓-FXY":"FXY",
-    "瑞郎-FXF":"FXF"
-}
-
-ALL_ETFS = {
-    **EQUITY_ETFS,
-    **TREASURY_ETFS,
-    **IG_ETFS,
-    **HY_ETFS,
-    **EMD_ETFS,
-    **LOCAL_ETFS,
-    **COMMODITY_ETFS,
-    **REIT_ETFS,
-    **SAFE_ETFS
-}
+    return pd.DataFrame(rows)
 
 # =====================================================
-# Sidebar
+# SIDEBAR
 # =====================================================
 
-st.sidebar.header("設定")
+st.sidebar.header("FRED Search")
 
-search_text = st.sidebar.text_input(
-    "搜尋 ETF / 國家",
-    ""
+search_keyword = st.sidebar.text_input(
+    "搜尋關鍵字",
+    value="CPI"
 )
 
-available_assets = list(ALL_ETFS.keys())
+search_df = search_fred(search_keyword)
 
-if search_text:
-    available_assets = [
-        x for x in available_assets
-        if search_text.lower() in x.lower()
-    ]
+if search_df.empty:
+    st.warning("查無符合的 Series")
+    st.stop()
 
-selected_assets = st.sidebar.multiselect(
-    "選擇ETF",
-    available_assets,
-    default=[
-        "美國-SPY",
-        "台灣-EWT",
-        "長期公債-TLT",
-        "黃金-GLD"
-    ]
+# =====================================================
+# SERIES SELECT
+# =====================================================
+
+series_options = {}
+
+for _, row in search_df.iterrows():
+
+    label = (
+        f"{row['ID']} | "
+        f"{row['Title']}"
+    )
+
+    series_options[label] = row["ID"]
+
+selected_labels = st.sidebar.multiselect(
+    "選擇 Series (可複選)",
+    options=list(series_options.keys()),
+    default=list(series_options.keys())[:3]
 )
 
-period = st.sidebar.selectbox(
-    "期間",
+if len(selected_labels) == 0:
+    st.warning("請至少選擇一個 Series")
+    st.stop()
+
+selected_series = [
+    series_options[x]
+    for x in selected_labels
+]
+
+# =====================================================
+# SETTINGS
+# =====================================================
+
+frequency = st.sidebar.selectbox(
+    "資料頻率",
     [
-        "MTD",
-        "YTD",
-        "1M",
-        "3M",
-        "6M",
-        "1Y",
-        "2Y",
-        "3Y",
-        "5Y"
-    ],
-    index=4
+        "原始",
+        "月",
+        "季",
+        "年"
+    ]
+)
+
+display_mode = st.sidebar.selectbox(
+    "顯示方式",
+    [
+        "Level",
+        "YoY %",
+        "MoM %",
+        "QoQ %",
+        "QoQ SAAR %"
+    ]
+)
+
+normalize = st.sidebar.checkbox(
+    "Normalize (基期=100)",
+    value=False
+)
+
+start_date = st.sidebar.date_input(
+    "開始日期",
+    pd.Timestamp("2000-01-01")
 )
 
 # =====================================================
-# Date
+# DOWNLOAD DATA
 # =====================================================
 
-today = pd.Timestamp.today()
+combined_df = pd.DataFrame()
 
-if period == "MTD":
-    start = today.replace(day=1)
+for sid in selected_series:
 
-elif period == "YTD":
-    start = pd.Timestamp(today.year, 1, 1)
+    try:
 
-elif period == "1M":
-    start = today - pd.DateOffset(months=1)
+        data = fred.get_series(sid)
 
-elif period == "3M":
-    start = today - pd.DateOffset(months=3)
+        temp = pd.DataFrame(data)
 
-elif period == "6M":
-    start = today - pd.DateOffset(months=6)
+        temp.columns = [sid]
 
-elif period == "1Y":
-    start = today - pd.DateOffset(years=1)
+        temp.index.name = "Date"
 
-elif period == "2Y":
-    start = today - pd.DateOffset(years=2)
+        if combined_df.empty:
 
-elif period == "3Y":
-    start = today - pd.DateOffset(years=3)
+            combined_df = temp
 
-else:
-    start = today - pd.DateOffset(years=5)
+        else:
+
+            combined_df = combined_df.join(
+                temp,
+                how="outer"
+            )
+
+    except Exception as e:
+
+        st.warning(f"{sid} 下載失敗")
 
 # =====================================================
-# Download
+# CHECK DATA
 # =====================================================
 
-if st.button("開始分析"):
+if combined_df.empty:
+    st.error("無法下載任何資料")
+    st.stop()
 
-    if len(selected_assets) == 0:
-        st.warning("請選擇ETF")
-        st.stop()
+# =====================================================
+# DATE PROCESS
+# =====================================================
 
-    prices = pd.DataFrame()
+combined_df = combined_df.reset_index()
 
-    with st.spinner("下載資料中..."):
+combined_df["Date"] = pd.to_datetime(
+    combined_df["Date"]
+)
 
-        for asset in selected_assets:
+combined_df = combined_df[
+    combined_df["Date"] >= pd.Timestamp(start_date)
+]
 
-            ticker = ALL_ETFS[asset]
+combined_df = combined_df.sort_values(
+    "Date"
+)
 
-            try:
+# =====================================================
+# RESAMPLE
+# =====================================================
 
-                data = yf.download(
-                    ticker,
-                    start=start,
-                    end=today,
-                    auto_adjust=True,
-                    progress=False
+combined_df = combined_df.set_index(
+    "Date"
+)
+
+if frequency == "月":
+
+    combined_df = (
+        combined_df
+        .resample("ME")
+        .last()
+    )
+
+elif frequency == "季":
+
+    combined_df = (
+        combined_df
+        .resample("QE")
+        .last()
+    )
+
+elif frequency == "年":
+
+    combined_df = (
+        combined_df
+        .resample("YE")
+        .last()
+    )
+
+combined_df = combined_df.reset_index()
+
+# =====================================================
+# TRANSFORM
+# =====================================================
+
+value_cols = [
+    c for c in combined_df.columns
+    if c != "Date"
+]
+
+lag_map = {
+    "原始": 12,
+    "月": 12,
+    "季": 4,
+    "年": 1
+}
+
+for col in value_cols:
+
+    if display_mode == "YoY %":
+
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(
+                lag_map[frequency]
+            )
+            * 100
+        )
+
+    elif display_mode == "MoM %":
+
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(1)
+            * 100
+        )
+
+    elif display_mode == "QoQ %":
+
+        combined_df[col] = (
+            combined_df[col]
+            .pct_change(1)
+            * 100
+        )
+
+    elif display_mode == "QoQ SAAR %":
+
+        qoq = (
+            combined_df[col]
+            .pct_change(1)
+        )
+
+        combined_df[col] = (
+            ((1 + qoq) ** 4 - 1)
+            * 100
+        )
+
+# =====================================================
+# NORMALIZE
+# =====================================================
+
+if normalize:
+
+    for col in value_cols:
+
+        clean = combined_df[col].dropna()
+
+        if len(clean) > 0:
+
+            base = clean.iloc[0]
+
+            if base != 0:
+
+                combined_df[col] = (
+                    combined_df[col]
+                    / base
+                    * 100
                 )
 
-                if not data.empty:
-                    prices[asset] = data["Close"]
+# =====================================================
+# SERIES INFO
+# =====================================================
 
-            except:
-                pass
+st.subheader("Series 資訊")
 
-    if prices.empty:
-        st.error("無法取得資料")
-        st.stop()
+info_df = search_df[
+    search_df["ID"].isin(selected_series)
+]
 
-    prices = prices.ffill()
+st.dataframe(
+    info_df,
+    use_container_width=True
+)
 
-    # ==========================
-    # Return Ranking
-    # ==========================
+# =====================================================
+# MELT FOR PLOTLY
+# =====================================================
 
-    returns = (
-        prices.iloc[-1]
-        / prices.iloc[0]
-        - 1
-    ) * 100
+plot_df = combined_df.melt(
+    id_vars="Date",
+    var_name="Series",
+    value_name="Value"
+)
 
-    ranking = pd.DataFrame({
-        "Return (%)": returns
-    })
+# =====================================================
+# CHART
+# =====================================================
 
-    ranking = ranking.sort_values(
-        "Return (%)",
-        ascending=False
-    )
+st.subheader("歷史走勢")
 
-    st.subheader("📈 報酬率排名")
-    st.dataframe(ranking)
+fig = px.line(
+    plot_df,
+    x="Date",
+    y="Value",
+    color="Series"
+)
 
-    fig_rank = px.bar(
-        ranking,
-        x="Return (%)",
-        y=ranking.index,
-        orientation="h"
-    )
+fig.update_layout(
+    height=800,
+    hovermode="x unified",
+    legend_title="Series"
+)
 
-    st.plotly_chart(
-        fig_rank,
-        use_container_width=True
-    )
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
 
-    # ==========================
-    # Heatmap
-    # ==========================
+# =====================================================
+# LATEST VALUES
+# =====================================================
 
-    st.subheader("🔥 Heatmap")
+st.subheader("最新數值")
 
-    fig_heat = px.imshow(
-        ranking.T,
-        text_auto=".1f",
-        color_continuous_scale="RdYlGn"
-    )
+latest_rows = []
 
-    st.plotly_chart(
-        fig_heat,
-        use_container_width=True
-    )
+for col in value_cols:
 
-    # ==========================
-    # Performance
-    # ==========================
+    s = combined_df[col].dropna()
 
-    st.subheader("📊 累積績效")
+    if len(s) > 0:
 
-    cumulative = (
-        prices / prices.iloc[0]
-    ) * 100
-
-    fig_line = px.line(
-        cumulative,
-        x=cumulative.index,
-        y=cumulative.columns
-    )
-
-    st.plotly_chart(
-        fig_line,
-        use_container_width=True
-    )
-
-    # ==========================
-    # Excel
-    # ==========================
-
-    output = BytesIO()
-
-    with pd.ExcelWriter(
-        output,
-        engine="xlsxwriter"
-    ) as writer:
-
-        ranking.to_excel(
-            writer,
-            sheet_name="Ranking"
+        latest_rows.append(
+            {
+                "Series": col,
+                "Latest": round(
+                    s.iloc[-1],
+                    4
+                ),
+                "Max": round(
+                    s.max(),
+                    4
+                ),
+                "Min": round(
+                    s.min(),
+                    4
+                )
+            }
         )
 
-        prices.to_excel(
-            writer,
-            sheet_name="Price"
-        )
+latest_df = pd.DataFrame(
+    latest_rows
+)
 
-        cumulative.to_excel(
-            writer,
-            sheet_name="Performance"
-        )
+st.dataframe(
+    latest_df,
+    use_container_width=True
+)
 
-    st.download_button(
-        "📥下載Excel",
-        output.getvalue(),
-        file_name=f"asset_dashboard_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# =====================================================
+# RAW DATA
+# =====================================================
+
+st.subheader("原始資料")
+
+st.dataframe(
+    combined_df,
+    use_container_width=True
+)
+
+# =====================================================
+# DOWNLOAD EXCEL
+# =====================================================
+
+buffer = BytesIO()
+
+with pd.ExcelWriter(
+    buffer,
+    engine="openpyxl"
+) as writer:
+
+    combined_df.to_excel(
+        writer,
+        sheet_name="Data",
+        index=False
     )
+
+    latest_df.to_excel(
+        writer,
+        sheet_name="Statistics",
+        index=False
+    )
+
+buffer.seek(0)
+
+st.download_button(
+    label="📥 Download Excel",
+    data=buffer,
+    file_name="fred_multi_series.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
